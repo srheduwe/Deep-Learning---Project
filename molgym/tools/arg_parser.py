@@ -49,10 +49,12 @@ def build_default_argparser() -> argparse.ArgumentParser:
                         help='model representation',
                         type=str,
                         default='internal',
-                        choices=['internal', 'covariant'])
+                        choices=['internal', 'covariant', 'painn'])
     parser.add_argument('--min_mean_distance', help='minimum mean distance', type=float, default=0.8)
     parser.add_argument('--max_mean_distance', help='maximum mean distance', type=float, default=1.8)
     parser.add_argument('--network_width', help='width of FC layers', type=int, default=128)
+    parser.add_argument('--num_interactions', help='number of interaction layers in painn', type=int, default=3)
+    parser.add_argument('--cutoff', help='cutoff distance for graph connectivity in painn', type=float, default=4.)
     parser.add_argument('--maxl', help='maximum L in spherical harmonics expansion', type=int, default=4)
     parser.add_argument('--num_cg_levels', help='number of CG layers', type=int, default=3)
     parser.add_argument('--num_channels_hidden', help='number of channels in hidden layers', type=int, default=10)
