@@ -1,3 +1,11 @@
+# ... with PaiNN!!
+
+.
+.
+.
+.
+.
+
 # MolGym: Reinforcement Learning for 3D Molecular Design
 
 This repository allows to train reinforcement learning policies for designing molecules directly in Cartesian coordinates. The agent builds molecules by repeatedly taking atoms from a given _bag_ and placing them onto a 3D _canvas_. 
