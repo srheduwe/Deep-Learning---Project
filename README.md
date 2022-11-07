@@ -40,36 +40,6 @@ pip install -e .
 
 **Note:** Make sure that the CUDA versions associated with `torch` and `torch-scatter` match. Check the [documentation](https://github.com/rusty1s/pytorch_scatter) if you run into any errors when installing `torch-scatter`.
 
-### Sparrow Setup
-
-1. Install the prerequisites. On Ubuntu, run 
-```shell
-sudo apt-get install cmake libeigen3-dev libboost-all-dev
-```
-2. Install [Sparrow 2.0.1](https://github.com/qcscine/sparrow/releases/tag/2.0.1):
-```shell
-git clone git@github.com:qcscine/sparrow.git
-cd sparrow
-git submodule init
-git submodule update
-mkdir build install
-cd build
-cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=../install -DSCINE_BUILD_PYTHON_BINDINGS=ON ..
-make
-make test
-make install
-export PATH=$PATH:<sparrow directory>/install/bin
-```
-
-**Note:** Compiling Sparrow may take a while.
-
-3. Register python bindings:
-```shell
-export PYTHONPATH=$PYTHONPATH:<sparrow directory>/install/lib/python<version>/site-packages
-export SCINE_MODULE_PATH=<sparrow directory>/install/lib
-```
-For troubleshooting, see the official [documentation](https://scine.ethz.ch/static/download/manuals/v2.0.1/sparrow_manual.pdf).
-
 ## Usage
 
 You can use this code to train and evaluate reinforcement learning agents for 3D molecular design. We currently support running experiments given a specific bag (single-bag), a stochastic bag, or multiple bags (multi-bag).
