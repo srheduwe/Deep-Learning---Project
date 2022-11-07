@@ -30,7 +30,6 @@ Dependencies:
 * Python >= 3.7
 * torch >= 1.5.1
 * [torch-scatter](https://github.com/rusty1s/pytorch_scatter) >= 2.0.5
-* [Sparrow 2.0.1](https://github.com/qcscine/sparrow/releases/tag/2.0.1)
 
 Install required packages and library itself:
 ```
