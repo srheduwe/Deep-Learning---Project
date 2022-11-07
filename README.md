@@ -54,7 +54,7 @@ python3 scripts/run.py \
     --max_mean_distance=2.10 \
     --bag_scale=5 \
     --beta=-10 \
-    --model=covariant \
+    --model=painn \
     --canvas_size=7 \
     --num_envs=10 \
     --num_steps=15000 \
