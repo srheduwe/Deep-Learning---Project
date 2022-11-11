@@ -2,11 +2,10 @@ import abc
 import time
 from typing import Tuple, Dict
 
-import ase.data
 import numpy as np
 from ase import Atoms, Atom
 
-from molgym.calculator import Sparrow
+from molgym.xtb import XTB
 
 
 class MolecularReward(abc.ABC):
@@ -15,27 +14,27 @@ class MolecularReward(abc.ABC):
         raise NotImplementedError
 
     @staticmethod
-    def get_minimum_spin_multiplicity(atoms) -> int:
-        return sum(ase.data.atomic_numbers[atom.symbol] for atom in atoms) % 2 + 1
+    def get_minimum_spin_multiplicity(atoms: Atoms) -> int:
+        return atoms.numbers.sum() % 2 + 1
+    
+    @staticmethod
+    def get_spin(atoms) -> int:
+        return MolecularReward.get_minimum_spin_multiplicity(atoms) - 1
 
 
 class InteractionReward(MolecularReward):
     def __init__(self) -> None:
-        # Due to some mysterious bug in Sparrow, calculations get slower and slower over time.
-        # Therefore, we generate a new Sparrow object every time.
-        self.calculator = Sparrow('PM6')
+        self.calculator = XTB()
 
         self.settings = {
-            'molecular_charge': 0,
-            'max_scf_iterations': 128,
-            'unrestricted_calculation': 1,
+            'chrg': 0,
+            'scc': {'maxiterations': 128},
         }
 
         self.atom_energies: Dict[str, float] = {}
 
     def calculate(self, atoms: Atoms, new_atom: Atom) -> Tuple[float, dict]:
         start = time.time()
-        self.calculator = Sparrow('PM6')
 
         all_atoms = atoms.copy()
         all_atoms.append(new_atom)
@@ -65,11 +64,10 @@ class InteractionReward(MolecularReward):
         if len(atoms) == 0:
             return 0.0
 
-        self.calculator.set_elements(list(atoms.symbols))
-        self.calculator.set_positions(atoms.positions)
-        self.settings['spin_multiplicity'] = self.get_minimum_spin_multiplicity(atoms)
-        self.calculator.set_settings(self.settings)
-        return self.calculator.calculate_energy()
+        self.calculator.atoms = atoms
+        self.settings['spin'] = self.get_spin(atoms)
+        self.calculator.set(**self.settings)
+        return self.calculator.get_potential_energy()
 
 
 class SolvationReward(InteractionReward):
@@ -80,7 +78,7 @@ class SolvationReward(InteractionReward):
 
     def calculate(self, atoms: Atoms, new_atom: Atom) -> Tuple[float, dict]:
         start_time = time.time()
-        self.calculator = Sparrow('PM6')
+        self.calculator = XTB()
 
         all_atoms = atoms.copy()
         all_atoms.append(new_atom)
