@@ -7,38 +7,13 @@ from typing import Tuple, Optional, Sequence
 import torch
 
 from molgym.agents.base import AbstractActorCritic
-from molgym.agents.covariant.agent import CovariantAC
-from molgym.agents.internal.agent import SchNetAC
 from molgym.agents.painn.agent import PainnAC
 from molgym.spaces import ObservationSpace, ActionSpace
 
 
 def build_model(config: dict, observation_space: ObservationSpace, action_space: ActionSpace,
                 device: torch.device) -> AbstractActorCritic:
-    if config['model'] == 'internal':
-        return SchNetAC(
-            observation_space=observation_space,
-            action_space=action_space,
-            min_max_distance=(config['min_mean_distance'], config['max_mean_distance']),
-            network_width=config['network_width'],
-            device=device,
-        )
-    elif config['model'] == 'covariant':
-        return CovariantAC(
-            observation_space=observation_space,
-            action_space=action_space,
-            min_max_distance=(config['min_mean_distance'], config['max_mean_distance']),
-            network_width=config['network_width'],
-            maxl=config['maxl'],
-            num_cg_levels=config['num_cg_levels'],
-            num_channels_hidden=config['num_channels_hidden'],
-            num_channels_per_element=config['num_channels_per_element'],
-            num_gaussians=config['num_gaussians'],
-            bag_scale=config['bag_scale'],
-            beta=float(config['beta']) if config['beta'] is not None else config['beta'],
-            device=device,
-        )
-    elif config['model'] == 'painn':
+    if config['model'] == 'painn':
         return PainnAC(
             observation_space=observation_space,
             action_space=action_space,
