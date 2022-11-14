@@ -3,7 +3,6 @@ from typing import Tuple, List, Optional
 import ase
 import ase.data
 import numpy as np
-import schnetpack as spk
 import torch
 import torch.distributions
 from torch import nn
@@ -65,10 +64,6 @@ class PainnAC(AbstractActorCritic):
         self.scalar_vector_update = nn.ModuleList(
             [layer.PaiNNUpdate(self.hidden_state_size) for _ in range(num_interactions)]
         )
-
-
-        self.converter = spk.AtomsConverter(device=self.device)
-        self.embedding_fn = spk.representation.SchNet(n_atom_basis=self.num_afeats)
 
         # MolGym neural networks
         self.phi_beta = MLP(

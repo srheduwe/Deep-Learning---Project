@@ -35,7 +35,6 @@ class InteractionReward(MolecularReward):
 
     def calculate(self, atoms: Atoms, new_atom: Atom) -> Tuple[float, dict]:
         start = time.time()
-
         all_atoms = atoms.copy()
         all_atoms.append(new_atom)
 
@@ -64,9 +63,9 @@ class InteractionReward(MolecularReward):
         if len(atoms) == 0:
             return 0.0
 
-        self.calculator.atoms = atoms
         self.settings['spin'] = self.get_spin(atoms)
         self.calculator.set(**self.settings)
+        self.calculator.atoms = atoms
         return self.calculator.get_potential_energy()
 
 
