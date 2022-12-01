@@ -150,26 +150,18 @@ class PainnAC(AbstractActorCritic):
         element_count = torch.zeros(size=(len(observations), self.num_zs), dtype=torch.float32, device=self.device)
         action_mask = torch.zeros(size=(len(observations), 6), dtype=torch.float32, device=self.device)
 
+        graph_states = []
+        worker_index_all = []
         for i, obs in enumerate(observations):
             # Get Atoms() object from observation
             atoms, formula = self.observation_space.parse(obs)
             bag_tuple = [count for atomic_num, count in formula]
             if len(atoms) > 0:
                 # Transform to graph dictionary
-                graph_state = [self.transformer(atoms)]
-                batch_host = data_painn.collate_atomsdata(graph_state, pin_memory=self.pin)
-                batch = {
-                    k: v.to(device=self.device, non_blocking=True)
-                    for (k, v) in batch_host.items()
-                }
-                # Get PaiNN embeddings for single observation
-                nodes_scalar, _, _ = self._get_painn_embeddings(batch)
-                # if len(atoms)>4:
-                #     print("nodes_scalar : " + str(nodes_scalar.shape))
-                #     print(nodes_scalar)
-                #     exit()
-                features[i, :len(atoms), :] = nodes_scalar # self.embedding_fn(self.converter(atoms))
-                #features[i, :len(atoms), :] =  self.embedding_fn(self.converter(atoms))
+                graph_state = self.transformer(atoms)
+                graph_states.append(graph_state)
+                worker_index_all.append(i)
+
                 focus_mask[i, :len(atoms)] = 1
                 focus_mask_next[i, :len(atoms) + 1] = 1
             else:
@@ -186,6 +178,23 @@ class PainnAC(AbstractActorCritic):
             action_mask[i, 4] = len(atoms) >= 3  # dihedral
             action_mask[i, 5] = len(atoms) >= 3  # kappa
 
+        # Get PaiNN embeddings for all observations
+        if len(graph_states) > 0:
+            batch_host = data_painn.collate_atomsdata(graph_states, pin_memory=self.pin)
+            batch = {
+                k: v.to(device=self.device, non_blocking=True)
+                for (k, v) in batch_host.items()
+            }
+            nodes_scalar, _, edge_offset = self._get_painn_embeddings(batch)
+            edge_offset = edge_offset.squeeze(-1).squeeze(-1)
+
+        for i, obs in enumerate(observations):
+            atoms, formula = self.observation_space.parse(obs)
+            if len(atoms) > 0:
+                worker_index = worker_index_all.index(i)
+                features[i, :len(atoms), :] = nodes_scalar[edge_offset[worker_index]:edge_offset[worker_index]+batch['num_nodes'][worker_index], :]
+
+
         return (
             features,  # n_obs x n_atoms x n_afeats
             focus_mask,  # n_obs x n_atoms
@@ -194,7 +203,7 @@ class PainnAC(AbstractActorCritic):
             action_mask,  # n_obs x n_actions
         )
 
-    def surrogate_features(self, observations: List[ObservationType], focus: torch.Tensor, element: torch.Tensor,
+    def slow_surrogate_features(self, observations: List[ObservationType], focus: torch.Tensor, element: torch.Tensor,
                            distance: torch.Tensor, angle: torch.Tensor, dihedral: torch.Tensor) -> torch.Tensor:
 
         features = torch.zeros(size=(len(observations), self.num_afeats), dtype=torch.float32, device=self.device)
@@ -226,6 +235,60 @@ class PainnAC(AbstractActorCritic):
             }
             nodes_scalar, _, _ = self._get_painn_embeddings(batch)
             features[i] = nodes_scalar[-1, :]
+
+        return features
+
+    def surrogate_features(self, observations: List[ObservationType], focus: torch.Tensor, element: torch.Tensor,
+                           distance: torch.Tensor, angle: torch.Tensor, dihedral: torch.Tensor) -> torch.Tensor:
+
+        features = torch.zeros(size=(len(observations), self.num_afeats), dtype=torch.float32, device=self.device)
+        focus = to_numpy(focus)
+        element = to_numpy(element)
+        distance = to_numpy(distance)
+        angle = to_numpy(angle)
+        dihedral = to_numpy(dihedral)
+
+        graph_states = []
+        for i, observation in enumerate(observations):
+            atoms, bag = self.observation_space.parse(observation)
+            positions = [atom.position for atom in atoms]
+            new_position = zmat.position_atom_helper(
+                positions=positions,
+                focus=int(round(focus[i, 0])),
+                distance=distance[i, 0],
+                angle=angle[i, 0],
+                dihedral=dihedral[i, 0],
+            )
+            new_element = int(round(element[i, 0]))
+            atomic_number = bag[new_element][0]
+            new_atom = ase.Atom(symbol=ase.data.chemical_symbols[atomic_number], position=new_position)
+            atoms.append(new_atom)
+            graph_states.append(self.transformer(atoms))
+
+
+        batch_host = data_painn.collate_atomsdata(graph_states, pin_memory=self.pin)
+        batch = {
+            k: v.to(device=self.device, non_blocking=True)
+            for (k, v) in batch_host.items()
+        }
+
+        #print(f'batch[num_nodes] : {batch["num_nodes"]}')
+        # exit()
+        nodes_scalar, nodes_vector, edge_offset = self._get_painn_embeddings(batch)
+        # print(f'edge_offset : {edge_offset}')
+
+        # Select "nodes_scalar" of "yet to be placed" atoms (along batch dimension)
+        new_atom_index_batch = batch['num_nodes'] + edge_offset.squeeze(-1).squeeze(-1)
+        # print(f'new_atom_index_batch : {new_atom_index_batch}')
+        new_atom_index_batch = new_atom_index_batch - 1
+        # print(f'new_atom_index_batch : {new_atom_index_batch}')
+        # new_index_batch = agent_num + edge_offset.squeeze(-1).squeeze(-1)
+        new_atom_nodes_scalar = nodes_scalar[new_atom_index_batch, :]
+        new_atom_nodes_vector = nodes_vector[new_atom_index_batch, :, :]
+
+        # print(f'new_atom_nodes_scalar shape : {new_atom_nodes_scalar.shape}')
+
+        features = new_atom_nodes_scalar
 
         return features
 
