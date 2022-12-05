@@ -49,7 +49,8 @@ def build_default_argparser() -> argparse.ArgumentParser:
                         help='model representation',
                         type=str,
                         default='internal',
-                        choices=['internal', 'covariant', 'painn'])
+                        choices=['internal', 'covariant', 'painn', 'schnet_edge'])
+    parser.add_argument('--update_edges', help='update edges in SchnetEdgeAC', type=bool, default=False)
     parser.add_argument('--min_mean_distance', help='minimum mean distance', type=float, default=0.8)
     parser.add_argument('--max_mean_distance', help='maximum mean distance', type=float, default=1.8)
     parser.add_argument('--network_width', help='width of FC layers', type=int, default=128)

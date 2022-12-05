@@ -10,6 +10,7 @@ from molgym.agents.base import AbstractActorCritic
 # from molgym.agents.covariant.agent import CovariantAC
 from molgym.agents.internal.agent import SchNetAC
 from molgym.agents.painn.agent import PainnAC
+from molgym.agents.painn.agent_schnet_edge import SchNetEdgeAC
 from molgym.spaces import ObservationSpace, ActionSpace
 
 
@@ -45,6 +46,17 @@ def build_model(config: dict, observation_space: ObservationSpace, action_space:
             min_max_distance=(config['min_mean_distance'], config['max_mean_distance']),
             network_width=config['network_width'],
             num_interactions=config["num_interactions"],
+            cutoff=config["cutoff"],
+            device=device,
+        )
+    elif config['model'] == 'schnet_edge':
+        return SchNetEdgeAC(
+            observation_space=observation_space,
+            action_space=action_space,
+            min_max_distance=(config['min_mean_distance'], config['max_mean_distance']),
+            network_width=config['network_width'],
+            num_interactions=config["num_interactions"],
+            update_edges=config["update_edges"],
             cutoff=config["cutoff"],
             device=device,
         )

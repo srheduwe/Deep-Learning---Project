@@ -51,6 +51,9 @@ class InteractionReward(MolecularReward):
             'elapsed_time': elapsed,
         }
 
+        if e_tot == 42.0:
+            return 42.0, info
+
         return reward, info
 
     def _calculate_atomic_energy(self, atom: Atom) -> float:
@@ -71,7 +74,7 @@ class InteractionReward(MolecularReward):
             energy = self.calculator.get_potential_energy()
         except:
             print('XTB calculation has FAILED!')
-            energy = 0.0
+            energy = 42.0
         return energy
 
 

@@ -59,34 +59,16 @@ class AseNeigborListWrapper:
         return indices, rel_positions, dist2
 
 
-class TransformRowToGraph:
-    def __init__(self, cutoff=5.0, targets="U0"):
+class TransformObjectToGraph:
+    def __init__(self, cutoff=5.0):
         self.cutoff = cutoff
 
-        if isinstance(targets, str):
-            self.targets = [targets]
-        else:
-            self.targets = targets
-
-    def __call__(self, row):
-        atoms = row.toatoms()
+    def __call__(self, atoms):
 
         if np.any(atoms.get_pbc()):
             edges, edges_features = self.get_edges_neighborlist(atoms)
         else:
             edges, edges_features = self.get_edges_simple(atoms)
-
-        # Extract targets if they exist
-        targets = []
-        for target in self.targets:
-            if hasattr(row, target):
-                t = getattr(row, target)
-            elif hasattr(row, "data") and target in row.data:
-                t = row.data[target]
-            else:
-                t = np.nan
-            targets.append(t)
-        targets = np.array(targets)
 
         default_type = torch.get_default_dtype()
 
@@ -97,7 +79,6 @@ class TransformRowToGraph:
             "edges": torch.tensor(edges),
             "edges_features": torch.tensor(edges_features, dtype=default_type),
             "num_edges": torch.tensor(edges.shape[0]),
-            "targets": torch.tensor(targets, dtype=default_type),
         }
 
         return graph_data
