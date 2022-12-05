@@ -28,20 +28,21 @@ class InteractionReward(MolecularReward):
 
         self.settings = {
             'chrg': 0,
-            'scc': {'maxiterations': 128},
+            'scc': {'maxiterations': 196},
         }
 
         self.atom_energies: Dict[str, float] = {}
 
     def calculate(self, atoms: Atoms, new_atom: Atom) -> Tuple[float, dict]:
         start = time.time()
+
         all_atoms = atoms.copy()
         all_atoms.append(new_atom)
 
         e_tot = self._calculate_energy(all_atoms)
         e_parts = self._calculate_energy(atoms) + self._calculate_atomic_energy(new_atom)
         delta_e = e_tot - e_parts
-
+        print(f'e_tot: {e_tot},   delta_e: {delta_e}')
         elapsed = time.time() - start
 
         reward = -1 * delta_e
@@ -66,7 +67,12 @@ class InteractionReward(MolecularReward):
         self.settings['spin'] = self.get_spin(atoms)
         self.calculator.set(**self.settings)
         self.calculator.atoms = atoms
-        return self.calculator.get_potential_energy()
+        try:
+            energy = self.calculator.get_potential_energy()
+        except:
+            print('XTB calculation has FAILED!')
+            energy = 0.0
+        return energy
 
 
 class SolvationReward(InteractionReward):

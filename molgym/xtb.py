@@ -40,7 +40,7 @@ class XTB(FileIOCalculator):
         with open('out.xot') as fd:
             lines = fd.read()
         E = float(search(r"\| TOTAL ENERGY\s+(-?\d+\.\d+) Eh", lines)[1])
-        self.results = dict(energy=E * Hartree)
+        self.results = dict(energy=E)
 
     def read(self, restart):
         self.atoms = read('mol.xyz')

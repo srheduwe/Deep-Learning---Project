@@ -64,10 +64,11 @@ class AbstractMolecularEnvironment(gym.Env, abc.ABC):
             )
 
         reward, info = self._calculate_reward(new_atom)
-
+        print(f'reward:  {reward}')
         if reward < self.min_reward:
             done = True
             reward = self.min_reward
+            print(f'TERMINATING DUE TO MIN REWARD:  {reward}')
 
         self.current_atoms.append(new_atom)
         self.current_formula = remove_atom_from_formula(self.current_formula, atomic_number)
@@ -98,7 +99,10 @@ class AbstractMolecularEnvironment(gym.Env, abc.ABC):
         return False
 
     def _calculate_reward(self, new_atom: Atom) -> Tuple[float, dict]:
-        return self.reward.calculate(self.current_atoms, new_atom)
+        reward, info = self.reward.calculate(self.current_atoms, new_atom)
+        if reward == 0.0:
+            return 2*self.min_reward, info
+        return reward, info 
 
     def _all_covered(self, existing_atoms: Atoms, new_atom: Atom) -> bool:
         # Ensure that certain atoms are not too far away from the nearest heavy atom to avoid H2, F2,... formation

@@ -324,19 +324,20 @@ def batch_ppo(
         data = train_buffer.get_data()
 
         # Train policy
-        opt_info = train(
-            ac=ac,
-            optimizer=optimizer,
-            data=data,
-            mini_batch_size=mini_batch_size,
-            clip_ratio=clip_ratio,
-            vf_coef=vf_coef,
-            entropy_coef=entropy_coef,
-            target_kl=target_kl,
-            gradient_clip=gradient_clip,
-            max_num_steps=max_num_train_iters,
-            device=device,
-        )
+        if train_rollout['return_std'] != 0.0:
+            opt_info = train(
+                ac=ac,
+                optimizer=optimizer,
+                data=data,
+                mini_batch_size=mini_batch_size,
+                clip_ratio=clip_ratio,
+                vf_coef=vf_coef,
+                entropy_coef=entropy_coef,
+                target_kl=target_kl,
+                gradient_clip=gradient_clip,
+                max_num_steps=max_num_train_iters,
+                device=device,
+            )
 
         if info_saver:
             opt_info['total_num_steps'] = total_num_steps
