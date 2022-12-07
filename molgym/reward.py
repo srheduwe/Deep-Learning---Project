@@ -66,7 +66,7 @@ class InteractionReward(MolecularReward):
     def _calculate_energy(self, atoms: Atoms) -> float:
         if len(atoms) == 0:
             return 0.0
-
+        self.calculator = XTB()
         self.settings['spin'] = self.get_spin(atoms)
         self.calculator.set(**self.settings)
         self.calculator.atoms = atoms
