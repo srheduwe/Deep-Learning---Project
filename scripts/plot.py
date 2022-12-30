@@ -74,8 +74,8 @@ def get_data(directories: List[str], mode: str) -> pd.DataFrame:
 
 def main() -> None:
     args = parse_args()
+    print('sadasd',args.dir)
     data = get_data(directories=args.dir, mode=args.mode)
-
     if args.max_num_steps:
         data = data[data['total_num_steps'] <= args.max_num_steps]
 

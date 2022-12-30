@@ -2,7 +2,6 @@ from typing import Tuple, List, Optional
 
 import ase
 import ase.data
-import math
 import numpy as np
 import torch
 import torch.distributions
@@ -17,7 +16,7 @@ from molgym.tools.util import to_numpy
 from . import layer_painn as layer
 from . import data_painn
 
-class SchNetEdgeAC(AbstractActorCritic):
+class PainnAC(AbstractActorCritic):
     def __init__(
         self,
         observation_space: ObservationSpace,
@@ -25,7 +24,6 @@ class SchNetEdgeAC(AbstractActorCritic):
         min_max_distance: Tuple[float, float],
         network_width: int,
         num_interactions: int,
-        update_edges: bool,
         cutoff: float,
         device: torch.device,
     ):
@@ -41,7 +39,7 @@ class SchNetEdgeAC(AbstractActorCritic):
         self.num_latent = self.num_afeats + self.num_latent_beta
 
         # PaiNN variables:
-        self.transformer = data_painn.TransformObjectToGraph(cutoff=cutoff)
+        self.transformer = data_painn.TransformAtomsObjectsToGraphXyz(cutoff=cutoff)
         self.hidden_state_size = network_width // 2
         if device==torch.device("cuda"):
             self.pin=True
@@ -49,64 +47,26 @@ class SchNetEdgeAC(AbstractActorCritic):
             self.pin=False
         self.cutoff = cutoff
         self.distance_embedding_size = 20
-        self.gaussian_expansion_step = 0.1
 
-        num_embeddings = 119 # atomic numbers + 1
-        edge_size = int(math.ceil(self.cutoff / self.gaussian_expansion_step))
+        num_embeddings = 119  # atomic numbers + 1
+        edge_size = self.distance_embedding_size
 
-        #-----Original setup of the actor part
         # Setup atom embeddings
         self.atom_embeddings = nn.Embedding(num_embeddings, self.hidden_state_size)
+
         # Setup interaction networks
         self.interactions = nn.ModuleList(
             [
-                layer.Interaction(self.hidden_state_size, edge_size)
+                layer.PaiNNInteraction(self.hidden_state_size, edge_size, self.cutoff)
                 for _ in range(num_interactions)
             ]
         )
         self.scalar_vector_update = nn.ModuleList(
             [layer.PaiNNUpdate(self.hidden_state_size) for _ in range(num_interactions)]
         )
-        if update_edges:
-            self.edge_updates = nn.ModuleList(
-                [
-                    layer.EdgeUpdate(edge_size, self.hidden_state_size)
-                    for _ in range(num_interactions)
-                ]
-            )
-        else:
-            self.edge_updates = [lambda e_state, e, n: e_state] * num_interactions
-        #Copy paste for the separate critic
-        # Setup atom embeddings
-        self.atom_embeddings_2 = nn.Embedding(num_embeddings, self.hidden_state_size)
-        # Setup interaction networks
-        self.interactions_2 = nn.ModuleList(
-            [
-                layer.Interaction(self.hidden_state_size, edge_size)
-                for _ in range(num_interactions)
-            ]
-        )
-        self.scalar_vector_update_2 = nn.ModuleList(
-            [layer.PaiNNUpdate(self.hidden_state_size) for _ in range(num_interactions)]
-        )
-        if update_edges:
-            self.edge_updates_2 = nn.ModuleList(
-                [
-                    layer.EdgeUpdate(edge_size, self.hidden_state_size)
-                    for _ in range(num_interactions)
-                ]
-            )
-        else:
-            self.edge_updates_2 = [lambda e_state, e, n: e_state] * num_interactions
-
 
         # MolGym neural networks
         self.phi_beta = MLP(
-            input_dim=self.num_zs,
-            output_dims=(network_width, self.num_latent_beta),
-        )
-        #Second MLP_beta for the separate critic
-        self.phi_beta_2 = MLP(
             input_dim=self.num_zs,
             output_dims=(network_width, self.num_latent_beta),
         )
@@ -155,14 +115,7 @@ class SchNetEdgeAC(AbstractActorCritic):
             output_dims=(network_width, network_width, 1),
         )
 
-        #Separate critic
-        self.critic_2 = MLP(input_dim=self.num_latent,
-            output_dims=(network_width, network_width, 1),
-        )
-               
         self.to(device)
-
-
 
     def to_action_space(self, action: torch.Tensor, observation: ObservationType) -> ActionType:
         stop, focus, element, distance, angle, dihedral, kappa = to_numpy(action)
@@ -232,14 +185,14 @@ class SchNetEdgeAC(AbstractActorCritic):
                 k: v.to(device=self.device, non_blocking=True)
                 for (k, v) in batch_host.items()
             }
-            nodes, edge_offset = self._get_schnet_edge_embeddings(batch)
+            nodes_scalar, _, edge_offset = self._get_painn_embeddings(batch)
             edge_offset = edge_offset.squeeze(-1).squeeze(-1)
 
         for i, obs in enumerate(observations):
             atoms, formula = self.observation_space.parse(obs)
             if len(atoms) > 0:
                 worker_index = worker_index_all.index(i)
-                features[i, :len(atoms), :] = nodes[edge_offset[worker_index]:edge_offset[worker_index]+batch['num_nodes'][worker_index], :]
+                features[i, :len(atoms), :] = nodes_scalar[edge_offset[worker_index]:edge_offset[worker_index]+batch['num_nodes'][worker_index], :]
 
 
         return (
@@ -250,6 +203,40 @@ class SchNetEdgeAC(AbstractActorCritic):
             action_mask,  # n_obs x n_actions
         )
 
+    def slow_surrogate_features(self, observations: List[ObservationType], focus: torch.Tensor, element: torch.Tensor,
+                           distance: torch.Tensor, angle: torch.Tensor, dihedral: torch.Tensor) -> torch.Tensor:
+
+        features = torch.zeros(size=(len(observations), self.num_afeats), dtype=torch.float32, device=self.device)
+        focus = to_numpy(focus)
+        element = to_numpy(element)
+        distance = to_numpy(distance)
+        angle = to_numpy(angle)
+        dihedral = to_numpy(dihedral)
+
+        for i, observation in enumerate(observations):
+            atoms, bag = self.observation_space.parse(observation)
+            positions = [atom.position for atom in atoms]
+            new_position = zmat.position_atom_helper(
+                positions=positions,
+                focus=int(round(focus[i, 0])),
+                distance=distance[i, 0],
+                angle=angle[i, 0],
+                dihedral=dihedral[i, 0],
+            )
+            new_element = int(round(element[i, 0]))
+            atomic_number = bag[new_element][0]
+            new_atom = ase.Atom(symbol=ase.data.chemical_symbols[atomic_number], position=new_position)
+            atoms.append(new_atom)
+            graph_state = [self.transformer(atoms)]
+            batch_host = data_painn.collate_atomsdata(graph_state, pin_memory=self.pin)
+            batch = {
+                k: v.to(device=self.device, non_blocking=True)
+                for (k, v) in batch_host.items()
+            }
+            nodes_scalar, _, _ = self._get_painn_embeddings(batch)
+            features[i] = nodes_scalar[-1, :]
+
+        return features
 
     def surrogate_features(self, observations: List[ObservationType], focus: torch.Tensor, element: torch.Tensor,
                            distance: torch.Tensor, angle: torch.Tensor, dihedral: torch.Tensor) -> torch.Tensor:
@@ -287,7 +274,7 @@ class SchNetEdgeAC(AbstractActorCritic):
 
         #print(f'batch[num_nodes] : {batch["num_nodes"]}')
         # exit()
-        nodes, edge_offset = self._get_schnet_edge_embeddings(batch)
+        nodes_scalar, nodes_vector, edge_offset = self._get_painn_embeddings(batch)
         # print(f'edge_offset : {edge_offset}')
 
         # Select "nodes_scalar" of "yet to be placed" atoms (along batch dimension)
@@ -296,7 +283,8 @@ class SchNetEdgeAC(AbstractActorCritic):
         new_atom_index_batch = new_atom_index_batch - 1
         # print(f'new_atom_index_batch : {new_atom_index_batch}')
         # new_index_batch = agent_num + edge_offset.squeeze(-1).squeeze(-1)
-        new_atom_nodes_scalar = nodes[new_atom_index_batch, :]
+        new_atom_nodes_scalar = nodes_scalar[new_atom_index_batch, :]
+        new_atom_nodes_vector = nodes_vector[new_atom_index_batch, :, :]
 
         # print(f'new_atom_nodes_scalar shape : {new_atom_nodes_scalar.shape}')
 
@@ -305,20 +293,11 @@ class SchNetEdgeAC(AbstractActorCritic):
         return features
 
 
-    def _get_schnet_edge_embeddings(self, input_dict: dict) -> Tuple[torch.tensor, torch.tensor, torch.tensor]:
-
-        """
-        Args:
-            input_dict (dict): Input dictionary of tensors with keys: nodes,
-                               num_nodes, edges, edges_features, num_edges,
-                               targets
-        """
-
-
+    def _get_painn_embeddings(self, input_dict: dict) -> Tuple[torch.tensor, torch.tensor, torch.tensor]:
 
         # Unpad and concatenate edges and features into batch (0th) dimension
-        edges_features = layer.unpad_and_cat(
-            input_dict["edges_features"], input_dict["num_edges"]
+        edges_displacement = layer.unpad_and_cat(
+            input_dict["edges_displacement"], input_dict["num_edges"]
         )
         edge_offset = torch.cumsum(
             torch.cat(
@@ -334,20 +313,47 @@ class SchNetEdgeAC(AbstractActorCritic):
         edges = layer.unpad_and_cat(edges, input_dict["num_edges"])
 
         # Unpad and concatenate all nodes into batch (0th) dimension
-        nodes = layer.unpad_and_cat(input_dict["nodes"], input_dict["num_nodes"])
-        nodes = self.atom_embeddings(nodes)
+        nodes_xyz = layer.unpad_and_cat(
+            input_dict["nodes_xyz"], input_dict["num_nodes"]
+        )
+        nodes_scalar = layer.unpad_and_cat(input_dict["nodes"], input_dict["num_nodes"])
+        nodes_scalar = self.atom_embeddings(nodes_scalar)
+        nodes_vector = torch.zeros(
+            (nodes_scalar.shape[0], 3, self.hidden_state_size),
+            dtype=nodes_scalar.dtype,
+            device=nodes_scalar.device,
+        )
+
+        # Compute edge distances
+        edges_distance, edges_diff = layer.calc_distance(
+            nodes_xyz,
+            input_dict["cell"],
+            edges,
+            edges_displacement,
+            input_dict["num_edges"],
+            return_diff=True,
+        )
 
         # Expand edge features in Gaussian basis
-        edge_state = layer.gaussian_expansion(
-            edges_features, [(0.0, self.gaussian_expansion_step, self.cutoff)]
+        edge_state = layer.sinc_expansion(
+            edges_distance, [(self.distance_embedding_size, self.cutoff)]
         )
 
         # Apply interaction layers
-        for edge_layer, int_layer in zip(self.edge_updates, self.interactions):
-            edge_state = edge_layer(edge_state, edges, nodes)
-            nodes = int_layer(nodes, edges, edge_state)
+        for int_layer, update_layer in zip(
+            self.interactions, self.scalar_vector_update
+        ):
+            nodes_scalar, nodes_vector = int_layer(
+                nodes_scalar,
+                nodes_vector,
+                edge_state,
+                edges_diff,
+                edges_distance,
+                edges,
+            )
+            nodes_scalar, nodes_vector = update_layer(nodes_scalar, nodes_vector)
 
-        return nodes, edge_offset
+        return nodes_scalar, nodes_vector, edge_offset
 
 
     def step(self, observations: List[ObservationType], actions: Optional[np.ndarray] = None) -> dict:
@@ -357,7 +363,6 @@ class SchNetEdgeAC(AbstractActorCritic):
         # element_count: n_obs x n_zs
 
         atomic_feats, focus_mask, focus_mask_next, element_count, action_mask = self.make_atomic_tensors(observations)
-        atomic_feats_2, focus_mask_2, focus_mask_next_2, element_count_2, action_mask_2 = self.make_atomic_tensors(observations)
         element_mask = (element_count > 0).int()
 
         #print("atomic_feats shape: " + str(atomic_feats.shape))
@@ -368,7 +373,7 @@ class SchNetEdgeAC(AbstractActorCritic):
 
         # latent states bag
         latent_bag = self.phi_beta(element_count)
-        latent_bag_2 = self.phi_beta_2(element_count)
+
         # latent representation of atoms and bag
         latent_bag_tiled = latent_bag.unsqueeze(1)  # n_obs x 1 x n_zs
         latent_bag_tiled = latent_bag_tiled.expand(-1, self.num_atoms, -1)  # n_obs x n_atoms x n_zs
@@ -487,12 +492,8 @@ class SchNetEdgeAC(AbstractActorCritic):
         weights = focus_mask.unsqueeze(-1).float()  # n_obs x n_atoms x 1
         weights = weights.transpose(1, 2)  # n_obs x 1 x n_atoms
         sum_atomic_feats = (weights @ atomic_feats).squeeze(1)  # n_obs x n_afeats
-        weights_2 = focus_mask_2.unsqueeze(-1).float()  # n_obs x n_atoms x 1
-        weights_2 = weights_2.transpose(1, 2)  # n_obs x 1 x n_atoms
-        sum_atomic_feats_2 = (weights_2 @ atomic_feats_2).squeeze(1)  # n_obs x n_afeats
         # mean_atomic_feats = sum_atomic_feats / torch.sum(focus_mask, dim=-1, keepdim=True)
         v = self.critic(torch.cat([sum_atomic_feats, latent_bag], dim=-1))
-        v_V = self.critic_2(torch.cat([sum_atomic_feats_2, latent_bag_2], dim=-1))
 
         # Log probabilities
         log_prob_list = [
@@ -527,7 +528,6 @@ class SchNetEdgeAC(AbstractActorCritic):
             'logp': log_prob.sum(dim=-1, keepdim=False),  # n_obs
             'ent': entropy[:, 0:2].sum(dim=-1, keepdim=False),  # n_obs
             'v': v.squeeze(-1),  # n_obs
-            'v_V': v_V.squeeze(-1), 
 
             # Actions in action space
             'actions': [self.to_action_space(a, o) for a, o in zip(actions, observations)],

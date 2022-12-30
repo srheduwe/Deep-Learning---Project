@@ -8,15 +8,14 @@ from molgym.spaces import ObservationType
 
 
 class PPOBufferContainer:
-    def __init__(self, size: int, gamma: float, lam_v: float, lam_pi: float) -> None:
+    def __init__(self, size: int, gamma: float, lam: float) -> None:
         super().__init__()
 
         self.gamma = gamma
-        self.lam_v = lam_v
-        self.lam_pi = lam_pi
+        self.lam = lam
         self.size = size
 
-        self.buffers = [DynamicPPOBuffer(gamma=self.gamma, lam_pi=self.lam_pi, lam_v=self.lam_v) for _ in range(self.size)]
+        self.buffers = [DynamicPPOBuffer(gamma=self.gamma, lam=self.lam) for _ in range(self.size)]
 
         self.episodic_returns: List[float] = []
         self.episode_lengths: List[int] = []
@@ -66,7 +65,7 @@ class PPOBufferContainer:
                 buffer.finish_path(value)
 
     def merge(self) -> DynamicPPOBuffer:
-        new = DynamicPPOBuffer(gamma=self.gamma, lam_pi=self.lam_pi, lam_v=self.lam_v)
+        new = DynamicPPOBuffer(gamma=self.gamma, lam=self.lam)
 
         assert all(buffer.is_finished() for buffer in self.buffers)
 

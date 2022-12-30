@@ -14,10 +14,10 @@ class DynamicPPOBuffer:
     for calculating the advantages of state-action pairs.
     """
     BUFFER_FIELDS = [
-        'obs_buf', 'act_buf', 'rew_buf', 'next_obs_buf', 'term_buf', 'val_buf', 'logp_buf', 'adv_buf', 'adv_tar', 'ret_buf'
+        'obs_buf', 'act_buf', 'rew_buf', 'next_obs_buf', 'term_buf', 'val_buf', 'logp_buf', 'adv_buf', 'ret_buf'
     ]
 
-    def __init__(self, gamma=0.99, lam_v=0.95, lam_pi=0.95) -> None:
+    def __init__(self, gamma=0.99, lam_p=0.95, lam_v=0.95) -> None:
         self.obs_buf: List[ObservationType] = []
         self.act_buf: List[np.ndarray] = []
         self.rew_buf: List[float] = []
@@ -29,12 +29,11 @@ class DynamicPPOBuffer:
 
         # Filled when path is finished
         self.adv_buf: List[float] = []
-        self.adv_tar: List[float] = []
         self.ret_buf: List[float] = []
 
         self.gamma = gamma
+        self.lam_p = lam_p
         self.lam_v = lam_v
-        self.lam_pi = lam_pi
 
         self.current_index = 0
         self.start_index = 0
@@ -78,8 +77,10 @@ class DynamicPPOBuffer:
 
         # the next two lines implement GAE-Lambda advantage calculation
         deltas = rews[:-1] + self.gamma * vals[1:] - vals[:-1]
-        self.adv_buf += util.discount_cumsum(deltas, self.gamma * self.lam_pi).tolist()
-        self.adv_tar += util.discount_cumsum(deltas, self.gamma * self.lam_v).tolist()
+        self.adv_buf += util.discount_cumsum(deltas, self.gamma * self.lam_p).tolist()
+
+        # new advantage target
+    	self.adv_tar += util.discount_cumsum(deltas, self.gamma * self.lam_v).tolist()
 
         # the next line computes rewards-to-go, to be targets for the value function
         self.ret_buf += util.discount_cumsum(rews, self.gamma).tolist()[:-1]

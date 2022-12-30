@@ -1,0 +1,5 @@
+$chrg 0
+$scc
+  maxiterations=196
+$end
+$spin 0
