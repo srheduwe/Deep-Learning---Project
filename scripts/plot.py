@@ -98,6 +98,7 @@ def main() -> None:
             label=name,
             color=color,
         )
+        print(name,np.max(group[prop]['mean']))
         ax.fill_between(
             x=group['total_num_steps'] / 1000,
             y1=group[prop]['mean'] - group[prop]['std'],

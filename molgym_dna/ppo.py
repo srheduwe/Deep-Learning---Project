@@ -2,6 +2,7 @@
 import logging
 import time
 from typing import Dict, Optional, Tuple, Sequence, List, Iterator
+import copy
 
 import numpy as np
 import torch
@@ -62,6 +63,82 @@ def compute_loss(
 
     return loss, info
 
+def compute_loss_clip(
+    ac: AbstractActorCritic,
+    data: dict,
+    clip_ratio: float,
+    vf_coef: float,
+    entropy_coef: float,
+    device=None,
+) -> Tuple[torch.Tensor, Dict[str, float]]:
+    pred = ac.step(data['obs'], data['act'])
+
+    old_logp = torch.as_tensor(data['logp'], device=device)
+    adv = torch.as_tensor(data['adv'], device=device)
+    ret = torch.as_tensor(data['ret'], device=device)
+
+    # Policy loss
+    ratio = torch.exp(pred['logp'] - old_logp)
+    obj = ratio * adv
+    clipped_obj = ratio.clamp(1 - clip_ratio, 1 + clip_ratio) * adv
+    policy_loss = -torch.min(obj, clipped_obj).mean()
+
+    # Entropy loss
+    entropy_loss = -entropy_coef * pred['ent'].mean()
+
+    # Value loss
+    vf_loss = vf_coef * (pred['v'] - ret).pow(2).mean()
+
+    # Total loss
+    loss = policy_loss + entropy_loss #+ vf_loss
+
+    # Approximate KL for early stopping
+    approx_kl = (old_logp - pred['logp']).mean()
+
+    # Extra info
+    clipped = ratio.lt(1 - clip_ratio) | ratio.gt(1 + clip_ratio)
+    clip_fraction = torch.as_tensor(clipped, dtype=torch.float32).mean()
+
+    info = dict(
+        policy_loss=to_numpy(policy_loss).item(),
+        entropy_loss=to_numpy(entropy_loss).item(),
+        vf_loss=to_numpy(vf_loss).item(),
+        total_loss=to_numpy(loss).item(),
+        approx_kl=to_numpy(approx_kl).item(),
+        clip_fraction=to_numpy(clip_fraction).item(),
+    )
+
+    return loss, info
+
+def compute_loss_value(
+    ac: AbstractActorCritic,
+    data: dict,
+    vf_coef: float,
+    device=None,
+) -> Tuple[torch.Tensor, Dict[str, float]]:
+    pred = ac.step(data['obs'], data['act'])
+    # Value loss 
+    # replaced with the new target from buffer
+    v_V = pred['v_V']
+    ret = torch.as_tensor(data['ret'],device=device)
+    vf_loss = vf_coef * (v_V - ret).pow(2).mean()
+    info = dict(
+        vf_loss=to_numpy(vf_loss).item(),
+    )
+    return vf_loss, info
+
+def compute_loss_distillation(ac, acold, data, beta, device=None):
+    pred = ac.step(data['obs'], data['act'])
+    logp =  pred['logp']
+    old_logp = torch.as_tensor(acold.step(data['obs'], data['act'])['logp'], device=device)
+    v_V = torch.detach(pred['v_V'])
+    # Value loss
+    vf_loss = (v_V-pred['v']).pow(2).mean()
+    # Approximate KL for early stopping
+    approx_kl = (old_logp - logp).mean()
+    loss = vf_loss + beta * approx_kl
+    return loss
+
 
 def get_batch_generator(indices: np.ndarray, batch_size: int) -> Iterator[np.ndarray]:
     assert len(indices.shape) == 1
@@ -119,9 +196,10 @@ def train(
 
         batch_infos = []
         batch_generator = get_batch_generator(indices=np.arange(len(data['obs'])), batch_size=mini_batch_size)
+        # clip loss from PPO - train the actor
         for batch_indices in batch_generator:
             data_batch = collect_data_batch(data, indices=batch_indices)
-            batch_loss, batch_info = compute_loss(ac,
+            batch_loss, batch_info = compute_loss_clip(ac,
                                                   data=data_batch,
                                                   clip_ratio=clip_ratio,
                                                   vf_coef=vf_coef,
@@ -130,6 +208,14 @@ def train(
 
             batch_loss.backward(retain_graph=False)  # type: ignore
             batch_infos.append(batch_info)
+        #Value loss - train the critic
+        batch_generator = get_batch_generator(indices=np.arange(len(data['obs'])), batch_size=mini_batch_size)
+        for batch_indices in batch_generator:
+            data_batch = collect_data_batch(data, indices=batch_indices)
+            batch_loss, info = compute_loss_value(ac,data_batch,vf_coef=vf_coef,device=device)
+            print('BL',batch_loss)
+            batch_loss.backward(retain_graph=False)  # type: ignore
+        
 
         loss_info = compute_mean_dict(batch_infos)
         loss_info['grad_norm'] = compute_gradient_norm(ac.parameters())
@@ -145,6 +231,15 @@ def train(
         optimizer.step()
         optimizer.zero_grad()
 
+        #Distillation - pass intel from critic to actor
+        batch_generator = get_batch_generator(indices=np.arange(len(data['obs'])), batch_size=mini_batch_size)
+        ac_old = copy.deepcopy(ac)#should it be here or earlier? TODO
+        for batch_indices in batch_generator:
+            data_batch = collect_data_batch(data, indices=batch_indices)
+            batch_loss = compute_loss_distillation(ac, ac_old, data_batch, beta=0.1, device=device)
+            batch_loss.backward(retain_graph=False)  # type: ignore    
+        optimizer.step()
+        optimizer.zero_grad()
         num_epochs += 1
 
         # Logging
@@ -194,8 +289,9 @@ def batch_rollout(ac: AbstractActorCritic,
                                rewards=rewards,
                                next_observations=next_observations,
                                terminals=terminals,
-                               values=to_numpy(predictions['v']),
-                               logps=to_numpy(predictions['logp']))
+                               values=to_numpy(predictions['v_V']),
+                               logps=to_numpy(predictions['logp']),
+                               vtargs=to_numpy(predictions['v']))
 
         # Reset environment if state is terminal to get valid next observation
         observations = envs.reset_if_terminal(next_observations, terminals)
@@ -303,7 +399,7 @@ def batch_ppo(
         logging.info(f'Iteration: {iteration}/{num_iterations - 1}, steps: {total_num_steps}')
 
         # Training rollout
-        train_container = PPOBufferContainer(size=envs.get_size(), gamma=gamma, lam=lam)
+        train_container = PPOBufferContainer(size=envs.get_size(), gamma=gamma, lam_pi=lam,lam_v=lam)
         train_rollout = batch_rollout(ac=ac, envs=envs, buffer_container=train_container, num_steps=num_steps_per_iter)
         logging.info(
             f'Training rollout: return={train_rollout["return_mean"]:.3f} ({train_rollout["return_std"]:.1f}), '
@@ -348,7 +444,7 @@ def batch_ppo(
 
         # Evaluate policy
         if (iteration % eval_freq == 0) or (iteration == num_iterations - 1):
-            eval_container = PPOBufferContainer(size=eval_envs.get_size(), gamma=gamma, lam=lam)
+            eval_container = PPOBufferContainer(size=eval_envs.get_size(), gamma=gamma, lam_v=lam, lam_pi=lam)
 
             with torch.no_grad():
                 ac.training = False

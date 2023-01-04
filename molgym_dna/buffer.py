@@ -14,10 +14,10 @@ class DynamicPPOBuffer:
     for calculating the advantages of state-action pairs.
     """
     BUFFER_FIELDS = [
-        'obs_buf', 'act_buf', 'rew_buf', 'next_obs_buf', 'term_buf', 'val_buf', 'logp_buf', 'adv_buf', 'ret_buf'
+        'obs_buf', 'act_buf', 'rew_buf', 'next_obs_buf', 'term_buf', 'val_buf', 'logp_buf', 'adv_buf', 'adv_tar', 'ret_buf'
     ]
 
-    def __init__(self, gamma=0.99, lam=0.95) -> None:
+    def __init__(self, gamma=0.99, lam_v=0.95, lam_pi=0.95) -> None:
         self.obs_buf: List[ObservationType] = []
         self.act_buf: List[np.ndarray] = []
         self.rew_buf: List[float] = []
@@ -29,16 +29,19 @@ class DynamicPPOBuffer:
 
         # Filled when path is finished
         self.adv_buf: List[float] = []
+        self.adv_tar: List[float] = []
         self.ret_buf: List[float] = []
+        self.V_targ_buf: List[float] = []
 
         self.gamma = gamma
-        self.lam = lam
+        self.lam_v = lam_v
+        self.lam_pi = lam_pi
 
         self.current_index = 0
         self.start_index = 0
 
     def store(self, obs: ObservationType, act: np.ndarray, reward: float, next_obs: ObservationType, terminal: bool,
-              value: float, logp: float) -> None:
+              value: float, logp: float, vtargbuf: float) -> None:
         """Append one time step of agent-environment interaction to the buffer."""
         self.obs_buf.append(obs)
         self.act_buf.append(act)
@@ -48,7 +51,7 @@ class DynamicPPOBuffer:
 
         self.val_buf.append(value)
         self.logp_buf.append(logp)
-
+        self.V_targ_buf.append(vtargbuf)
         self.current_index += 1
 
     def finish_path(self, last_val: float) -> Tuple[Optional[float], int]:
@@ -76,8 +79,9 @@ class DynamicPPOBuffer:
 
         # the next two lines implement GAE-Lambda advantage calculation
         deltas = rews[:-1] + self.gamma * vals[1:] - vals[:-1]
-        self.adv_buf += util.discount_cumsum(deltas, self.gamma * self.lam).tolist()
-
+        self.adv_buf += util.discount_cumsum(deltas, self.gamma * self.lam_pi).tolist()
+        self.adv_tar += util.discount_cumsum(deltas, self.gamma * self.lam_v).tolist()
+        self.V_targ_buf += (util.discount_cumsum(deltas,self.gamma*self.lam_v)+vals[:-1]).tolist()
         # the next line computes rewards-to-go, to be targets for the value function
         self.ret_buf += util.discount_cumsum(rews, self.gamma).tolist()[:-1]
 
@@ -88,7 +92,6 @@ class DynamicPPOBuffer:
 
         # Ensure that all buffer fields have the same length
         assert all(len(getattr(self, field)) == self.current_index for field in DynamicPPOBuffer.BUFFER_FIELDS)
-
         return episodic_return, episode_length
 
     def is_finished(self) -> bool:
@@ -109,8 +112,16 @@ class DynamicPPOBuffer:
 
         adv_buf_standard = (adv_buf - adv_mean) / adv_std
 
+        # advantage normalization trick for new adv_tar
+        adv_tar = np.array(self.adv_tar)
+        adv_mean_tar = np.mean(adv_tar)
+        adv_std_tar = np.std(adv_tar)
+
+        adv_tar_standard = (adv_tar - adv_mean_tar) / adv_std_tar
         return dict(obs=self.obs_buf,
                     act=np.array(self.act_buf),
                     ret=np.array(self.ret_buf),
                     adv=adv_buf_standard,
-                    logp=np.array(self.logp_buf))
+                    adv_tar=adv_tar_standard,
+                    logp=np.array(self.logp_buf),
+                    vtar=np.array(self.ret_buf))#TODO THIS IS NOT VERY PROPER

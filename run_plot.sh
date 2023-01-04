@@ -40,5 +40,5 @@ source ../../venv/bin/activate
 #cd molgym-painn/
 #module load molgym
 #python3 scripts/structures.py --dir=runs/internal/results --symbols=X,H,O
-python3 scripts/plot.py --dir=runs/CH4/results
-python3 scripts/structures.py --dir=runs/CH4/results --symbols=X,C,H
+python3 scripts/plot.py --dir={runs/CH3NO_dna/results,runs/CH3NO_baseline/results}
+#python3 scripts/structures.py --dir=runs/CH3NO_dna/results --symbols=X,C,H,N,O
